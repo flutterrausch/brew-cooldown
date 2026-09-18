@@ -55,7 +55,13 @@ Before an eligible cask is actually upgraded, its archive is downloaded and
 checksum-verified. A small `brew ruby` query asks Homebrew's cask installer for
 archive-dependent extraction tools and other dependencies, without installing
 anything. Those candidates and their dependencies must also pass the cooldown.
-Newly discovered dependencies may therefore cause another seven-day wait. Preview
+Before an upgrade, complete formula recipes are also inspected for resource/patch
+checksums and resource-implied dependencies. API summaries omit these details.
+The check includes bottled candidates because Homebrew may fall back to source.
+Recipe files may be downloaded, but formula source archives are not. Unchecksummed
+resources, external patches, and local patch files without independent checksums
+are deferred. Newly discovered dependencies start their own cooldown.
+Preview
 does not download archives and labels eligible casks as pending this final check.
 
 Eligible candidates are re-read immediately before each upgrade, and the dependency
@@ -92,8 +98,8 @@ Do not run another Homebrew update/install/upgrade or edit taps concurrently.
 Homebrew has no public atomic API for executing an immutable upgrade plan, so
 there remains a gap between final verification and installation. The wrapper's
 lock covers other wrapper invocations only. Future changes to Homebrew's implicit
-installation behaviour may require updates to these checks. The archive and target
-queries use Homebrew's internal Ruby API (verified against Homebrew 6.0.22); API
+installation behaviour may require updates to these checks. The recipe, archive, environment,
+and target queries use Homebrew's internal Ruby API (verified against Homebrew 6.0.22); API
 errors defer the upgrade rather than bypassing the checks. These integration
 points need particular attention when supporting future Homebrew releases.
 

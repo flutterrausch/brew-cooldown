@@ -106,6 +106,26 @@ class ObservationTests(unittest.TestCase):
 
 
 class PlannerTests(unittest.TestCase):
+    def test_source_resource_tool_is_observed_and_excludable(self):
+        brew = FakeBrew([formula("zstd")])
+        entries = {}
+        Planner(brew, entries, 7, 100).add("formula", formula())
+        for exclusions in ([], ["zstd"]):
+            planner = Planner(brew, entries, 7, 100 + 8 * DAY, exclusions)
+            root = planner.add("formula", formula())
+            with patch.object(brew, "source_deps", return_value=["zstd"], create=True):
+                expanded = planner.source_closure({root})
+            self.assertIn(("formula", "homebrew/core/zstd"), expanded)
+            self.assertTrue(any("zstd" in r for r in planner.blockers(expanded)))
+
+    def test_unverifiable_source_prevents_upgrade(self):
+        planner = Planner(FakeBrew(), {}, 7, 100)
+        root = planner.add("formula", formula())
+        planner.waits[root] = 0
+        with patch.object(planner.brew, "source_deps", side_effect=CooldownError("unchecksummed resource"), create=True):
+            with self.assertRaisesRegex(CooldownError, "unchecksummed"):
+                planner.source_closure({root})
+
     def test_blocked_cask_does_not_hide_other_mature_archive_dependencies(self):
         young, mature = cask("a-young"), cask("z-mature")
         brew = FakeBrew([formula("extractor")], [young, mature])
@@ -323,6 +343,9 @@ class ExecutionTests(unittest.TestCase):
         guard = patch.object(Brew, "check_environment")
         guard.start()
         self.addCleanup(guard.stop)
+        source = patch.object(Brew, "source_deps", return_value=[])
+        source.start()
+        self.addCleanup(source.stop)
         scanner = patch.object(Brew, "security_warnings")
         self.scanner = scanner.start()
         self.addCleanup(scanner.stop)

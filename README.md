@@ -87,7 +87,8 @@ script, use `brew update && brew-cooldown upgrade` in place of unrestricted
 - **Early-stage:** checked on macOS with Homebrew 6.0.22. Actual upgrades have not
   yet been tested end to end on a live system.
 - Dependencies can extend the wait. Casks may need an archive download during
-  `upgrade` to discover extraction dependencies; preview does not download archives.
+  `upgrade` to discover extraction dependencies. Complete formula recipes are also
+  checked before upgrading; preview does not download archives.
 - Unknown or checksum-free candidates are deferred. Frequent releases can keep a
   package waiting. Review urgent security fixes individually.
 - Avoid concurrent Homebrew commands or tap edits. Homebrew cannot atomically

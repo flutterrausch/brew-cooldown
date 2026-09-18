@@ -226,6 +226,39 @@ class Brew:
             raise CooldownError("unexpected dependency output")
         return names
 
+    def source_deps(self, name):
+        # Inspect complete recipes even for bottled candidates: Homebrew may fall
+        # back to source. API metadata omits resources and their implicit tools.
+        script = '''
+require "json"
+require "formula"
+require "api/formula"
+f = Formulary.factory(JSON.parse(%s))
+f = Homebrew::API::Formula.source_download_formula(f) if f.loaded_from_api?
+resources = f.resources.to_a
+patches = f.patchlist + resources.flat_map(&:patches)
+raise "Local patches lack independent checksums: #{f.full_name}" if patches.any? { |p| p.is_a?(LocalPatch) }
+resources += patches.grep(ExternalPatch).map(&:resource)
+resources.each do |resource|
+  checksum = resource.checksum.to_s
+  revision = resource.specs[:revision].to_s
+  unless checksum.match?(/\\A[0-9a-f]{64}\\z/) || revision.match?(/\\A(?:[0-9a-f]{40}|[0-9a-f]{64})\\z/)
+    raise "Unverifiable resource or patch in #{f.full_name}: #{resource.name}"
+  end
+end
+puts "BREW_COOLDOWN_SOURCE=" + JSON.generate(f.deps.reject { |dep| dep.test? && !dep.build? }.map(&:name))
+''' % json.dumps(json.dumps(name))
+        output = self.run("ruby", "-e", script)
+        lines = [line for line in output.splitlines() if line.startswith("BREW_COOLDOWN_SOURCE=")]
+        try:
+            deps = json.loads(lines[0].split("=", 1)[1]) if len(lines) == 1 else None
+            if not isinstance(deps, list) or any(
+                    not isinstance(n, str) or not NAME.fullmatch(n) or n.startswith("-") for n in deps):
+                raise ValueError("invalid source dependencies")
+            return deps
+        except (ValueError, TypeError) as exc:
+            raise CooldownError(f"could not inspect formula source dependencies: {name}") from exc
+
     def cask_archive_deps(self, name):
         # Archive formats can add dependencies absent from `brew info`/`brew deps`.
         # Only fetch and inspect; never call Installer.install or dependency installers.
@@ -383,6 +416,19 @@ class Planner:
                     expanded.update(self.closure(self.load(kind, dep)))
                 checked.add(key)
 
+    def source_closure(self, closure):
+        checked = set()
+        expanded = set(closure)
+        while True:
+            pending = {k for k in expanded if k[0] == "formula"} - checked
+            if not pending:
+                return expanded
+            for key in sorted(pending):
+                if not self.blockers({key}):
+                    for dep in self.brew.source_deps(key[1]):
+                        expanded.update(self.closure(self.load("formula", dep)))
+                checked.add(key)
+
     def blockers(self, closure):
         reasons = []
         for key in sorted(closure):
@@ -490,10 +536,16 @@ def main(argv=None):
                                 print(f"DEFER {key[1]}: " + "; ".join(blockers))
                                 continue
                             planner.verify(closure)
+                        closure = planner.source_closure(closure)
+                        blockers = planner.blockers(closure)
+                        if blockers:
+                            print(f"DEFER {key[1]}: " + "; ".join(blockers))
+                            continue
+                        planner.verify(closure)
                         print(f"UPGRADE {key[1]}", flush=True)
                         brew.upgrade(*key)
                     else:
-                        pending = "; archive dependency check pending" if any(k[0] == "cask" for k in closure) else ""
+                        pending = "; source/archive preflight pending"
                         print(f"READY {key[1]} ({len(closure) - 1} dependency candidates checked{pending})")
                 except CooldownError as exc:
                     print(f"DEFER {key[1]}: {exc}", file=sys.stderr)
