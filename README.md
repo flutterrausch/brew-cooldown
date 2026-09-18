@@ -48,6 +48,13 @@ more upgrades than necessary. Exclusions also block parents that depend on them.
 An installed `pkgconf` and its dependencies are checked because Homebrew can repair
 it after an upgrade following a macOS SDK change.
 
+Before an eligible cask is actually upgraded, its archive is downloaded and
+checksum-verified. A small `brew ruby` query asks Homebrew's cask installer for
+archive-dependent extraction tools and other dependencies, without installing
+anything. Those candidates and their dependencies must also pass the cooldown.
+Newly discovered dependencies may therefore cause another seven-day wait. Preview
+does not download archives and labels eligible casks as pending this final check.
+
 Eligible candidates are re-read immediately before each upgrade, and the dependency
 graph is checked again. Automatic dependent upgrades/repairs and installation
 cleanup are disabled. Upgrades run one selected package at a time with Homebrew's
@@ -57,7 +64,7 @@ State is stored in `$XDG_STATE_HOME/brew-cooldown/state.json`, defaulting to
 `~/.local/state/brew-cooldown/state.json`. `--state PATH` overrides it. State writes
 are atomic, overlapping wrapper runs are locked out, and invalid state aborts.
 Deleting state restarts the observation period. A detected backward clock jump
-also restarts it. Exit status is zero for normal age deferrals, one for metadata,
+also restarts it. Exit status is zero for normal policy deferrals, one for metadata,
 verification, or upgrade errors, and two for invalid CLI arguments.
 
 ## Limits
@@ -71,7 +78,10 @@ Do not run another Homebrew update/install/upgrade or edit taps concurrently.
 Homebrew has no public atomic API for executing an immutable upgrade plan, so
 there remains a gap between final verification and installation. The wrapper's
 lock covers other wrapper invocations only. Future changes to Homebrew's implicit
-installation behaviour may require updates to these checks.
+installation behaviour may require updates to these checks. The archive query
+uses Homebrew's internal Ruby API (verified against Homebrew 6.0.22); API errors
+defer the upgrade rather than bypassing the check. This is the one integration
+point that needs particular attention when supporting future Homebrew releases.
 
 Homebrew itself, arbitrary Ruby in third-party recipes, installer/post-install
 scripts, software those scripts download independently, and apps' own automatic

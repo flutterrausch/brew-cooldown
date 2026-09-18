@@ -155,6 +155,40 @@ class Brew:
             raise CooldownError("unexpected dependency output")
         return names
 
+    def cask_archive_deps(self, name):
+        # Archive formats can add dependencies absent from `brew info`/`brew deps`.
+        # Only fetch and inspect; never call Installer.install or dependency installers.
+        script = '''
+require "json"
+require "cask/cask_loader"
+require "cask/download"
+require "cask/installer"
+cask = Cask::CaskLoader.load(JSON.parse(%s))
+Cask::Download.new(cask, require_sha: true).fetch
+dependencies = Cask::Installer.new(cask).cask_and_formula_dependencies.map do |dep|
+  if dep.is_a?(Cask::Cask)
+    ["cask", dep.full_name]
+  else
+    ["formula", dep.full_name]
+  end
+end
+puts "BREW_COOLDOWN_DEPS=" + JSON.generate(dependencies)
+''' % json.dumps(json.dumps(name))
+        output = self.run("ruby", "-e", script)
+        lines = [line for line in output.splitlines() if line.startswith("BREW_COOLDOWN_DEPS=")]
+        try:
+            if len(lines) != 1:
+                raise ValueError("missing dependency result")
+            dependencies = json.loads(lines[0].split("=", 1)[1])
+            if not isinstance(dependencies, list):
+                raise ValueError("invalid dependencies")
+            for kind, dep in dependencies:
+                if kind not in ("formula", "cask") or not NAME.fullmatch(dep) or dep.startswith("-"):
+                    raise ValueError("invalid dependency")
+            return dependencies
+        except (ValueError, TypeError) as exc:
+            raise CooldownError(f"could not inspect cask archive dependencies: {name}") from exc
+
     def upgrade(self, kind, name):
         # No arbitrary arguments: users cannot accidentally enable HEAD/greedy/source overrides.
         result = subprocess.run(["brew", "upgrade", "--no-ask", f"--{kind}", name], env=self.env)
@@ -230,6 +264,22 @@ class Planner:
 
     def excluded(self, key):
         return any(x == key[1] or x == key[1].rsplit("/", 1)[-1] for x in self.exclusions)
+
+    def archive_closure(self, closure):
+        checked = set()
+        expanded = set(closure)
+        while True:
+            pending = {k for k in expanded if k[0] == "cask"} - checked
+            if not pending:
+                return expanded
+            for key in sorted(pending):
+                # Newly discovered casks must mature before even fetching their archive.
+                blockers = self.blockers({key})
+                if blockers:
+                    raise CooldownError("; ".join(blockers))
+                for kind, dep in self.brew.cask_archive_deps(key[1]):
+                    expanded.update(self.closure(self.load(kind, dep)))
+                checked.add(key)
 
     def blockers(self, closure):
         reasons = []
@@ -317,10 +367,18 @@ def main(argv=None):
                         planner.verify(closure)
                         if planner.closure(key) != closure:
                             raise CooldownError("dependency graph changed; run again")
+                        if any(k[0] == "cask" for k in closure):
+                            closure = planner.archive_closure(closure)
+                            blockers = planner.blockers(closure)
+                            if blockers:
+                                print(f"DEFER {key[1]}: " + "; ".join(blockers))
+                                continue
+                            planner.verify(closure)
                         print(f"UPGRADE {key[1]}", flush=True)
                         brew.upgrade(*key)
                     else:
-                        print(f"READY {key[1]} ({len(closure) - 1} dependency candidates checked)")
+                        pending = "; archive dependency check pending" if any(k[0] == "cask" for k in closure) else ""
+                        print(f"READY {key[1]} ({len(closure) - 1} dependency candidates checked{pending})")
                 except CooldownError as exc:
                     print(f"DEFER {key[1]}: {exc}", file=sys.stderr)
                     failed = True

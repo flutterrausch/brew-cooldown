@@ -92,6 +92,29 @@ class ObservationTests(unittest.TestCase):
 
 
 class PlannerTests(unittest.TestCase):
+    def test_archive_extractor_dependency_gets_its_own_cooldown(self):
+        app = cask()
+        brew = FakeBrew([formula("extractor")], [app])
+        entries = {}
+        Planner(brew, entries, 7, 100).add("cask", app)
+        planner = Planner(brew, entries, 7, 100 + 8 * DAY)
+        root = planner.add("cask", app)
+        with patch.object(brew, "cask_archive_deps", return_value=[("formula", "extractor")], create=True):
+            closure = planner.archive_closure(planner.closure(root))
+        self.assertEqual(len(closure), 2)
+        self.assertIn("extractor", planner.blockers(closure)[0])
+
+    def test_archive_query_error_aborts(self):
+        app = cask()
+        brew = FakeBrew(casks=[app])
+        entries = {}
+        Planner(brew, entries, 7, 100).add("cask", app)
+        planner = Planner(brew, entries, 7, 100 + 8 * DAY)
+        root = planner.add("cask", app)
+        with patch.object(brew, "cask_archive_deps", side_effect=CooldownError("API changed"), create=True):
+            with self.assertRaisesRegex(CooldownError, "API changed"):
+                planner.archive_closure({root})
+
     def test_young_transitive_dependency_blocks_old_parent(self):
         parent, child = formula(), formula("child")
         brew = FakeBrew([parent, child], deps={"homebrew/core/example": ["child"]})
@@ -140,6 +163,23 @@ class PlannerTests(unittest.TestCase):
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_cask_archive_failure_prevents_execution(self):
+        candidate = cask(outdated=True)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state.json"
+            with state_file(path) as state:
+                observe(state["candidates"], "cask:homebrew/cask/app",
+                        fingerprint("cask", candidate), 100, 7)
+            with patch.object(Brew, "info", return_value={"formulae": [], "casks": [candidate]}), \
+                    patch.object(Brew, "cask_archive_deps", side_effect=CooldownError("archive check failed")) as archive, \
+                    patch.object(Brew, "upgrade") as upgrade, \
+                    patch("brew_cooldown.time.time", return_value=100 + 8 * DAY), patch("builtins.print"):
+                self.assertEqual(main(["preview", "--state", str(path)]), 0)
+                archive.assert_not_called()
+                self.assertEqual(main(["upgrade", "--state", str(path)]), 1)
+                archive.assert_called_once()
+                upgrade.assert_not_called()
+
     def run_tool(self, path, command="upgrade", aged=False, changed=False):
         candidate = formula()
         if aged:
