@@ -93,6 +93,36 @@ class ObservationTests(unittest.TestCase):
 
 
 class PlannerTests(unittest.TestCase):
+    def test_blocked_cask_does_not_hide_other_mature_archive_dependencies(self):
+        young, mature = cask("a-young"), cask("z-mature")
+        brew = FakeBrew([formula("extractor")], [young, mature])
+        entries = {}
+        Planner(brew, entries, 7, 100).add("cask", mature)
+        planner = Planner(brew, entries, 7, 100 + 8 * DAY)
+        roots = {planner.add("cask", item) for item in (young, mature)}
+        with patch.object(brew, "cask_archive_deps", return_value=[("formula", "extractor")], create=True) as archive:
+            closure = planner.archive_closure(roots)
+            archive.assert_called_once_with("homebrew/cask/z-mature")
+        self.assertIn(("formula", "homebrew/core/extractor"), closure)
+
+    def test_identity_change_preserves_unchanged_observations(self):
+        original, other = formula(), formula("other")
+        brew = FakeBrew([other])  # original disappeared or was renamed
+        planner = Planner(brew, {}, 7, 100)
+        keys = {planner.add("formula", item) for item in (original, other)}
+        with self.assertRaisesRegex(CooldownError, "changed"):
+            planner.verify(keys)
+        self.assertNotIn("formula:homebrew/core/example", planner.entries)
+        self.assertIn("formula:homebrew/core/other", planner.entries)
+
+    def test_all_changed_fingerprints_are_invalidated_in_one_batch(self):
+        brew = FakeBrew([formula(revision=1), formula("other", revision=1)])
+        planner = Planner(brew, {}, 7, 100)
+        keys = {planner.add("formula", formula(n)) for n in ("example", "other")}
+        with self.assertRaisesRegex(CooldownError, "changed"):
+            planner.verify(keys)
+        self.assertEqual(planner.entries, {})
+
     def test_new_archive_cask_is_deferred_without_fetching_it(self):
         app = cask()
         brew = FakeBrew(casks=[app, cask("helper")])

@@ -209,11 +209,9 @@ class Brew:
         script = '''
 require "json"
 require "cask/cask_loader"
-require "cask/download"
 require "cask/installer"
 cask = Cask::CaskLoader.load(JSON.parse(%s))
-Cask::Download.new(cask, require_sha: true).fetch
-dependencies = Cask::Installer.new(cask).cask_and_formula_dependencies.map do |dep|
+dependencies = Cask::Installer.new(cask, require_sha: true).cask_and_formula_dependencies.map do |dep|
   if dep.is_a?(Cask::Cask)
     ["cask", dep.full_name]
   else
@@ -325,7 +323,8 @@ class Planner:
             for key in sorted(pending):
                 # Newly discovered casks must mature before even fetching their archive.
                 if self.blockers({key}):
-                    return expanded
+                    checked.add(key)
+                    continue
                 for kind, dep in self.brew.cask_archive_deps(key[1]):
                     expanded.update(self.closure(self.load(kind, dep)))
                 checked.add(key)
@@ -350,19 +349,20 @@ class Planner:
             result = self.brew.info(kind, sorted(k[1] for k in keys))
             items = result["formulae" if kind == "formula" else "casks"]
             fresh = {identity(kind, item): item for item in items}
-            if keys != fresh.keys():
-                for key in keys:
-                    self.entries.pop(":".join(key), None)
-                    self.errors[key] = "package identity changed during verification"
-                raise CooldownError("package identity changed during verification; run again")
-            for key in keys:
+            changed = {}
+            for key in keys - fresh.keys():
+                changed[key] = "package identity changed during verification"
+            for key in keys & fresh.keys():
                 try:
                     if fingerprint(kind, fresh[key]) != fingerprint(kind, self.data[key]):
                         raise CooldownError(f"candidate changed during verification: {key[1]}; run again")
                 except CooldownError as exc:
-                    self.entries.pop(":".join(key), None)
-                    self.errors[key] = str(exc)
-                    raise
+                    changed[key] = str(exc)
+            for key, reason in changed.items():
+                self.entries.pop(":".join(key), None)
+                self.errors[key] = reason
+            if changed or keys != fresh.keys():
+                raise CooldownError("candidate identity or fingerprint changed during verification; run again")
 
 
 def positive_days(value):
