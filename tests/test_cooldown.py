@@ -106,6 +106,26 @@ class ObservationTests(unittest.TestCase):
 
 
 class PlannerTests(unittest.TestCase):
+    def test_compact_defer_uses_longest_dependency_wait(self):
+        planner = Planner(FakeBrew(), {}, 7, 100)
+        root = planner.add("formula", formula())
+        child = planner.add("formula", formula("child"))
+        planner.waits[root], planner.waits[child] = DAY, 3 * DAY
+        with patch("builtins.print") as output:
+            planner.report_defer(root, {root, child})
+        output.assert_called_once_with("DEFER example: 3.0d remaining (dependency cooldown)", flush=True)
+        with patch("builtins.print") as output:
+            planner.report_defer(root, {root, child}, verbose=True)
+        self.assertIn("  homebrew/core/child: 3.0d remaining", [c.args[0] for c in output.call_args_list])
+
+    def test_compact_defer_keeps_policy_errors_visible(self):
+        planner = Planner(FakeBrew(), {}, 7, 100, ["child"])
+        root = planner.add("formula", formula(tap="vendor/tap", tap_git_head="abc"))
+        child = planner.add("formula", formula("child"))
+        with patch("builtins.print") as output:
+            planner.report_defer(root, {root, child})
+        output.assert_called_once_with("DEFER vendor/tap/example: child: excluded", flush=True)
+
     def test_source_resource_tool_is_observed_and_excludable(self):
         brew = FakeBrew([formula("zstd")])
         entries = {}

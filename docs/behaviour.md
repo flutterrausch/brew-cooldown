@@ -25,6 +25,8 @@ Run `brew update` before invoking this tool to fetch current metadata. The tool
 itself disables automatic Homebrew updates while inspecting and upgrading. It clears
 inherited forced API refreshes and checks effective Homebrew configuration before
 inspection and each upgrade; conflicting `brew.env` overrides abort the run.
+Default `DEFER` lines show the longest remaining cooldown across the package and
+its dependencies, or a blocking policy/error. `--verbose` lists individual blockers.
 Both preview and upgrade record observations. Once a candidate reaches the age
 threshold, it can be upgraded; no older version is selected instead.
 

@@ -46,6 +46,13 @@ def identity(kind, data):
     return kind, full
 
 
+def display_name(name):
+    for tap in ("homebrew/core/", "homebrew/cask/"):
+        if name.startswith(tap):
+            return name[len(tap):]
+    return name
+
+
 def fingerprint(kind, data):
     identity(kind, data)
     recipe = (data.get("ruby_source_checksum") or {}).get("sha256", "")
@@ -464,20 +471,41 @@ class Planner:
                         expanded.update(self.closure(self.load("formula", dep)))
                 checked.add(key)
 
+    def policy_blocker(self, key):
+        if self.excluded(key):
+            return "excluded"
+        if (key == ("formula", "homebrew/core/pkgconf")
+                and self.data[key].get("pinned") and self.data[key].get("outdated")):
+            return "pinned; Homebrew's implicit SDK repair could replace it"
+        return self.errors.get(key)
+
     def blockers(self, closure):
         reasons = []
         for key in sorted(closure):
-            name = key[1]
-            if self.excluded(key):
-                reasons.append(f"{name}: excluded")
-            elif (key == ("formula", "homebrew/core/pkgconf")
-                  and self.data[key].get("pinned") and self.data[key].get("outdated")):
-                reasons.append(f"{name}: pinned; Homebrew's implicit SDK repair could replace it")
-            elif key in self.errors:
-                reasons.append(f"{name}: {self.errors[key]}")
+            reason = self.policy_blocker(key)
+            if reason:
+                reasons.append(f"{key[1]}: {reason}")
             elif self.waits[key] > 0:
-                reasons.append(f"{name}: {self.waits[key] / DAY:.1f}d remaining")
+                reasons.append(f"{key[1]}: {self.waits[key] / DAY:.1f}d remaining")
         return reasons
+
+    def report_defer(self, root, closure, verbose=False):
+        policies = [(key, self.policy_blocker(key)) for key in sorted(closure, key=lambda k: (k != root, k))]
+        policies = [(key, reason) for key, reason in policies if reason]
+        if policies:
+            key, reason = policies[0]
+            summary = reason if key == root else f"{display_name(key[1])}: {reason}"
+            if len(policies) > 1:
+                summary += f" (+{len(policies) - 1} other blockers)"
+        else:
+            wait = max(self.waits[key] for key in closure)
+            summary = f"{wait / DAY:.1f}d remaining"
+            if wait > self.waits.get(root, 0):
+                summary += " (dependency cooldown)"
+        print(f"DEFER {display_name(root[1])}: {summary}", flush=True)
+        if verbose:
+            for reason in self.blockers(closure):
+                print(f"  {reason}")
 
     def verify(self, closure):
         for kind in ("formula", "cask"):
@@ -539,27 +567,26 @@ def main(argv=None):
                     if args.only and not selected:
                         continue
                     if key in planner.errors and not item.get("outdated"):
-                        print(f"DEFER {key[1]}: {planner.errors[key]}")
+                        print(f"DEFER {display_name(key[1])}: {planner.errors[key]}")
                     if item.get("outdated") and not item.get("pinned"):
                         roots.append(key)
             if set(args.only) - matched:
                 raise CooldownError(f"not installed or unresolved: {', '.join(sorted(set(args.only) - matched))}")
             planner.resolve_exclusions()
             brew.security_warnings(verbose=args.verbose)
-            print(f"{args.command.capitalize()}: {args.days}-day observation cooldown; {len(roots)} outdated candidates")
+            print(f"{args.command.capitalize()}: {args.days}-day observation cooldown; {len(roots)} outdated candidates", flush=True)
+            if not args.verbose:
+                print("Use --verbose for dependency details.", flush=True)
             failed = False
             for key in roots:
                 if planner.excluded(key):
-                    print(f"SKIP {key[1]}: excluded")
+                    print(f"SKIP {display_name(key[1])}: excluded")
                     continue
                 try:
                     closure = planner.closure(key)
                     blockers = planner.blockers(closure)
                     if blockers:
-                        blockers.sort(key=lambda r: ("remaining" in r, not r.startswith(key[1] + ":")))
-                        shown = blockers if args.verbose else blockers[:3]
-                        extra = f"; +{len(blockers) - len(shown)} more (--verbose)" if len(shown) < len(blockers) else ""
-                        print(f"DEFER {key[1]}: " + "; ".join(shown) + extra)
+                        planner.report_defer(key, closure, args.verbose)
                         continue
                     if args.command == "upgrade":
                         planner.verify(closure)
@@ -569,22 +596,22 @@ def main(argv=None):
                             closure = planner.archive_closure(closure)
                             blockers = planner.blockers(closure)
                             if blockers:
-                                print(f"DEFER {key[1]}: " + "; ".join(blockers))
+                                planner.report_defer(key, closure, args.verbose)
                                 continue
                             planner.verify(closure)
                         closure = planner.source_closure(closure)
                         blockers = planner.blockers(closure)
                         if blockers:
-                            print(f"DEFER {key[1]}: " + "; ".join(blockers))
+                            planner.report_defer(key, closure, args.verbose)
                             continue
                         planner.verify(closure)
-                        print(f"UPGRADE {key[1]}", flush=True)
+                        print(f"UPGRADE {display_name(key[1])}", flush=True)
                         brew.upgrade(*key)
                     else:
                         pending = "; source/archive preflight pending"
-                        print(f"READY {key[1]} ({len(closure) - 1} dependency candidates checked{pending})")
+                        print(f"READY {display_name(key[1])} ({len(closure) - 1} dependency candidates checked{pending})")
                 except CooldownError as exc:
-                    print(f"DEFER {key[1]}: {exc}", file=sys.stderr)
+                    print(f"DEFER {display_name(key[1])}: {exc}", file=sys.stderr)
                     failed = True
             print(f"Observations saved to {args.state}")
         return int(failed)
