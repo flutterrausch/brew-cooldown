@@ -69,7 +69,8 @@ candidates. Even an old release waits seven days after your first observation.
 Both formulae and casks are included. Repeat `--only` or `--exclude` as needed;
 use `vendor/tap/package` to distinguish namesakes. Pinned packages are not selected
 for upgrade, and nothing is unpinned. Explicit exclusions also block dependent
-upgrades. No packages are excluded by default.
+upgrades. Formula aliases such as `pkg-config` are accepted; unknown or ambiguous
+exclusions abort before any upgrade. No packages are excluded by default.
 
 Upgrades are deferred if Homebrew's short name or installed alias would select a
 different package. This avoids both source mix-ups and implicit trust grants from

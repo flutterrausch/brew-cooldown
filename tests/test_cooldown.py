@@ -224,6 +224,35 @@ class PlannerTests(unittest.TestCase):
         closure = planner.closure(planner.add("cask", cask()))
         self.assertIn(("formula", "homebrew/core/pkgconf"), closure)
 
+    def test_alias_exclusion_blocks_root_and_parent(self):
+        pkgconf = formula("pkgconf", aliases=["pkg-config"])
+        brew = FakeBrew([pkgconf], deps={"homebrew/core/example": ["pkgconf"]})
+        planner = Planner(brew, {}, 7, 100, ["pkg-config"])
+        child = planner.add("formula", pkgconf)
+        parent = planner.add("formula", formula())
+        planner.resolve_exclusions()
+        self.assertTrue(planner.excluded(child))
+        self.assertTrue(any("pkgconf: excluded" in r for r in planner.blockers(planner.closure(parent))))
+
+    def test_unresolved_and_ambiguous_exclusions_abort(self):
+        planner = Planner(FakeBrew(), {}, 7, 100, ["typo"])
+        with self.assertRaisesRegex(CooldownError, "unresolved"):
+            planner.resolve_exclusions()
+        planner = Planner(FakeBrew(), {}, 7, 100, ["tool"])
+        planner.add("formula", formula("tool"))
+        planner.add("formula", formula("tool", tap="vendor/tap", tap_git_head="abc"))
+        with self.assertRaisesRegex(CooldownError, "ambiguous"):
+            planner.resolve_exclusions()
+        planner.exclusions = ["vendor/tap/tool"]
+        planner.resolve_exclusions()
+        self.assertFalse(planner.excluded(("formula", "homebrew/core/tool")))
+        self.assertTrue(planner.excluded(("formula", "vendor/tap/tool")))
+
+    def test_exclusion_resolves_uninstalled_dependency(self):
+        planner = Planner(FakeBrew([formula("child")]), {}, 7, 100, ["child"])
+        planner.resolve_exclusions()
+        self.assertEqual(planner.exclusions, {"homebrew/core/child"})
+
     def test_excluded_dependency_blocks_parent(self):
         brew = FakeBrew([formula("child")], deps={"homebrew/core/example": ["child"]})
         planner = Planner(brew, {}, 7, 100, ["child"])

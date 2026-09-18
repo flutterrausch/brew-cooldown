@@ -397,8 +397,37 @@ class Planner:
             visit(pkgconf)
         return found
 
+    def names(self, key):
+        names = {key[1], key[1].rsplit("/", 1)[-1]}
+        if key[0] == "formula":
+            tap = self.data[key]["tap"]
+            for alias in self.data[key].get("aliases", []):
+                if isinstance(alias, str) and NAME.fullmatch(alias):
+                    names.add(alias if "/" in alias else f"{tap}/{alias}")
+                    names.add(alias.rsplit("/", 1)[-1])
+        return names
+
+    def resolve_exclusions(self):
+        resolved = set()
+        for name in self.exclusions:
+            matches = {key for key in self.data if name in self.names(key)}
+            if not matches:
+                # Exclusions may name a dependency that is not installed yet.
+                for kind in ("formula", "cask"):
+                    try:
+                        key = self.load(kind, name)
+                    except CooldownError:
+                        continue
+                    if name in self.names(key):
+                        matches.add(key)
+            if len(matches) != 1:
+                raise CooldownError(f"unresolved or ambiguous exclusion: {name}; "
+                                    "use a canonical tap/package name")
+            resolved.update(key[1] for key in matches)
+        self.exclusions = resolved
+
     def excluded(self, key):
-        return any(x == key[1] or x == key[1].rsplit("/", 1)[-1] for x in self.exclusions)
+        return bool(set(self.exclusions) & self.names(key))
 
     def archive_closure(self, closure):
         checked = set()
@@ -499,7 +528,7 @@ def main(argv=None):
                     except CooldownError as exc:
                         print(f"DEFER {item.get('full_name', item.get('token', '?'))}: {exc}")
                         continue
-                    selected = {n for n in args.only if n in (key[1], key[1].rsplit("/", 1)[-1])}
+                    selected = {n for n in args.only if n in planner.names(key)}
                     matched.update(selected)
                     if args.only and not selected:
                         continue
@@ -509,6 +538,7 @@ def main(argv=None):
                         roots.append(key)
             if set(args.only) - matched:
                 raise CooldownError(f"not installed or unresolved: {', '.join(sorted(set(args.only) - matched))}")
+            planner.resolve_exclusions()
             brew.security_warnings()
             print(f"{args.command.capitalize()}: {args.days}-day observation cooldown; {len(roots)} outdated candidates")
             failed = False
