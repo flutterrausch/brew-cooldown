@@ -80,6 +80,19 @@ class ObservationTests(unittest.TestCase):
         with self.assertRaises(CooldownError):
             fingerprint("formula", formula(urls={"stable": {"revision": "main"}}))
 
+    def test_failed_and_interrupted_runs_preserve_changed_observations(self):
+        for failure in (CooldownError("unresolved selection"), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure)), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "state.json"
+                with state_file(path) as state:
+                    observe(state["candidates"], "p", "a" * 64, 100, 7)
+                with self.assertRaises(type(failure)), state_file(path) as state:
+                    observe(state["candidates"], "p", "b" * 64, 100 + 8 * DAY, 7)
+                    raise failure
+                with state_file(path) as state:
+                    self.assertEqual(observe(state["candidates"], "p", "a" * 64,
+                                             100 + 9 * DAY, 7), 7 * DAY)
+
     def test_state_roundtrip_and_corruption(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.json"

@@ -73,6 +73,8 @@ selected with a fully qualified `--only` argument. This check does not change tr
 State is stored in `$XDG_STATE_HOME/brew-cooldown/state.json`, defaulting to
 `~/.local/state/brew-cooldown/state.json`. `--state PATH` overrides it. State writes
 are atomic, overlapping wrapper runs are locked out, and invalid state aborts.
+Observations are saved even when a later check fails or the run is interrupted with
+Ctrl-C (a forced kill or power loss can still lose the current run).
 Deleting state restarts the observation period. A detected backward clock jump
 also restarts it. Exit status is zero for normal policy deferrals, one for metadata,
 verification, or upgrade errors, and two for invalid CLI arguments.

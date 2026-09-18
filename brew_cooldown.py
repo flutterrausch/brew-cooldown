@@ -109,17 +109,19 @@ def state_file(path):
                 raise CooldownError(f"invalid state file {path}: {exc}") from exc
         else:
             state = {"schema": 1, "candidates": {}}
-        yield state
-        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
-            temp = Path(output.name)
-            try:
-                json.dump(state, output, indent=2, sort_keys=True)
-                output.write("\n")
-                output.flush()
-                os.fsync(output.fileno())
-                os.replace(temp, path)
-            finally:
-                temp.unlink(missing_ok=True)
+        try:
+            yield state
+        finally:
+            with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as output:
+                temp = Path(output.name)
+                try:
+                    json.dump(state, output, indent=2, sort_keys=True)
+                    output.write("\n")
+                    output.flush()
+                    os.fsync(output.fileno())
+                    os.replace(temp, path)
+                finally:
+                    temp.unlink(missing_ok=True)
 
 
 class Brew:
