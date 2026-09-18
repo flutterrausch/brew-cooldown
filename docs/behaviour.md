@@ -15,7 +15,8 @@ released upstream fix may not be present in the Homebrew candidate. Homebrew can
 also fall back to scanning current formula metadata when the installed source is
 unknown; scanner diagnostics are retained as warnings. Skipped packages, unavailable
 scanning, and timeouts are reported without changing upgrade eligibility or exit
-status. The scan has a 60-second timeout and does not cover casks. No findings is
+status. Unchecked formulae are summarized by count; `--verbose` includes their names.
+The scan has a 60-second timeout and does not cover casks. No findings is
 not evidence that every installed package is safe. Normal cooldown, pin, and
 exclusion rules still apply.
 

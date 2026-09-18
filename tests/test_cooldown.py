@@ -276,10 +276,10 @@ class PlannerTests(unittest.TestCase):
 
 
 class SecurityWarningTests(unittest.TestCase):
-    def scan(self, report, code=0, stderr=""):
+    def scan(self, report, code=0, stderr="", verbose=False):
         result = subprocess.CompletedProcess([], code, json.dumps(report), stderr)
         with patch("brew_cooldown.subprocess.run", return_value=result) as run, patch("builtins.print") as output:
-            Brew().security_warnings()
+            Brew().security_warnings(verbose=verbose)
         self.assertEqual(run.call_args.args[0],
                          ["brew", "vulns", "--severity=high", "--fix-available", "--json"])
         return [str(call.args[0]) for call in output.call_args_list]
@@ -297,10 +297,20 @@ class SecurityWarningTests(unittest.TestCase):
 
     def test_skipped_packages_and_scanner_diagnostics_are_warnings(self):
         lines = self.scan({"findings": [], "skipped_formulae": ["vendor/tap/tool"]},
-                          code=1, stderr="Installed source unknown; using current formula version\n")
+                          code=1, stderr="Installed source unknown; using current formula version\n", verbose=True)
         self.assertTrue(any(line.startswith("⚠️") and "Installed source unknown" in line for line in lines))
         self.assertTrue(any(line.startswith("⚠️") and "vendor/tap/tool" in line for line in lines))
         self.assertTrue(any(line.startswith("⚠️") and "incomplete" in line for line in lines))
+
+    def test_skipped_names_are_only_shown_in_verbose_output(self):
+        report = {"findings": [], "skipped_formulae": ["vendor/tap/tool"]}
+        normal = self.scan(report)
+        self.assertTrue(any(line.startswith("⚠️ Security scan incomplete: 1 formula could not be checked") for line in normal))
+        self.assertFalse(any("vendor/tap/tool" in line for line in normal))
+        self.assertIn("No high/critical advisories with released fixes found among checked formulae. "
+                      "Casks are not scanned.", normal)
+        verbose = self.scan(report, verbose=True)
+        self.assertIn("⚠️ Unchecked formulae: vendor/tap/tool", verbose)
 
     def test_invalid_output_is_nonfatal_and_not_a_clean_bill_of_health(self):
         lines = self.scan({"unexpected": []})

@@ -171,7 +171,7 @@ class Brew:
         except ValueError as exc:
             raise CooldownError("Homebrew returned invalid JSON") from exc
 
-    def security_warnings(self):
+    def security_warnings(self, verbose=False):
         """Advisories inform the user; they never change upgrade eligibility."""
         def warn(message):
             # Keep registry-provided text on one line without terminal controls.
@@ -207,13 +207,19 @@ class Brew:
                 warn("Review these potential security fixes. The Homebrew candidate is not verified "
                      "to fix them; cooldowns, pins, and exclusions remain unchanged.")
             if skipped:
-                warn(f"Security scanner skipped {len(skipped)} formulae: {', '.join(skipped)}")
+                noun = "formula" if len(skipped) == 1 else "formulae"
+                warn(f"Security scan incomplete: {len(skipped)} {noun} could not be checked "
+                     "(--verbose lists them).")
+                if verbose:
+                    warn(f"Unchecked formulae: {', '.join(skipped)}")
             # brew vulns normally exits 1 when it finds open vulnerabilities.
             if result.returncode not in (0, 1) or (result.returncode == 1 and not count):
                 warn(f"Security scan incomplete (exit {result.returncode}); cooldown checks continue.")
             elif not count:
-                print("No high/critical advisories with released fixes reported; coverage may be incomplete.")
-            print("Security scan covers formulae, not casks.", flush=True)
+                print("No high/critical advisories with released fixes found among checked formulae. "
+                      "Casks are not scanned.", flush=True)
+            if count or result.returncode != 0:
+                print("Casks are not scanned.", flush=True)
         except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError) as exc:
             warn(f"Security scan unavailable or incomplete ({exc}); cooldown checks continue. "
                  "This does not mean installed packages are free of vulnerabilities.")
@@ -510,7 +516,7 @@ def main(argv=None):
     parser.add_argument("--days", type=positive_days, default=7)
     parser.add_argument("--only", action="append", default=[], metavar="NAME", help="select installed package (repeatable)")
     parser.add_argument("--exclude", action="append", default=[], metavar="NAME", help="exclude package, including as dependency")
-    parser.add_argument("--verbose", action="store_true", help="show every dependency blocker")
+    parser.add_argument("--verbose", action="store_true", help="show every dependency blocker and unchecked formula")
     parser.add_argument("--state", type=Path, default=Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "brew-cooldown/state.json")
     args = parser.parse_args(argv)
     try:
@@ -539,7 +545,7 @@ def main(argv=None):
             if set(args.only) - matched:
                 raise CooldownError(f"not installed or unresolved: {', '.join(sorted(set(args.only) - matched))}")
             planner.resolve_exclusions()
-            brew.security_warnings()
+            brew.security_warnings(verbose=args.verbose)
             print(f"{args.command.capitalize()}: {args.days}-day observation cooldown; {len(roots)} outdated candidates")
             failed = False
             for key in roots:
