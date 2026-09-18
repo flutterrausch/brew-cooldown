@@ -127,12 +127,33 @@ def state_file(path):
 class Brew:
     def __init__(self):
         self.env = dict(os.environ)
+        self.env.pop("HOMEBREW_FORCE_API_AUTO_UPDATE", None)
         self.env.update({
             "HOMEBREW_NO_AUTO_UPDATE": "1",
             "HOMEBREW_NO_INSTALL_CLEANUP": "1",
             "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK": "1",
             "HOMEBREW_NO_ENV_HINTS": "1",
         })
+
+    def check_environment(self):
+        # brew.env files can override the environment passed to the process.
+        required = {
+            "HOMEBREW_NO_AUTO_UPDATE": "1",
+            "HOMEBREW_NO_INSTALL_CLEANUP": "1",
+            "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK": "1",
+        }
+        script = 'require "json"; puts "BREW_COOLDOWN_ENV=" + JSON.generate(ENV.to_h.select { |k, _| ' + \
+                 json.dumps([*required, "HOMEBREW_FORCE_API_AUTO_UPDATE"]) + '.include?(k) })'
+        output = self.run("ruby", "-e", script)
+        lines = [line for line in output.splitlines() if line.startswith("BREW_COOLDOWN_ENV=")]
+        try:
+            effective = json.loads(lines[0].split("=", 1)[1]) if len(lines) == 1 else {}
+            if (any(effective.get(k) != v for k, v in required.items())
+                    or effective.get("HOMEBREW_FORCE_API_AUTO_UPDATE")):
+                raise ValueError("conflicting brew.env configuration")
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise CooldownError("Homebrew configuration overrides cooldown safeguards; "
+                                "check your brew.env files") from exc
 
     def run(self, *args):
         result = subprocess.run(["brew", *args], env=self.env, text=True, capture_output=True)
@@ -268,6 +289,7 @@ puts "BREW_COOLDOWN_TARGET=" + JSON.generate(identities)
 
     def upgrade(self, kind, name):
         # No arbitrary arguments: users cannot accidentally enable HEAD/greedy/source overrides.
+        self.check_environment()
         short_name = self.upgrade_name(kind, name)
         result = subprocess.run(["brew", "upgrade", "--no-ask", f"--{kind}", short_name], env=self.env)
         if result.returncode:
@@ -418,6 +440,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         brew = Brew()
+        brew.check_environment()
         installed = brew.info()
         with state_file(args.state) as state:
             planner = Planner(brew, state["candidates"], args.days, time.time(), args.exclude)

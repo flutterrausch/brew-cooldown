@@ -21,7 +21,9 @@ exclusion rules still apply.
 
 The first observation starts the clock, even for a release published long ago.
 Run `brew update` before invoking this tool to fetch current metadata. The tool
-itself disables automatic Homebrew updates while inspecting and upgrading.
+itself disables automatic Homebrew updates while inspecting and upgrading. It clears
+inherited forced API refreshes and checks effective Homebrew configuration before
+inspection and each upgrade; conflicting `brew.env` overrides abort the run.
 Both preview and upgrade record observations. Once a candidate reaches the age
 threshold, it can be upgraded; no older version is selected instead.
 

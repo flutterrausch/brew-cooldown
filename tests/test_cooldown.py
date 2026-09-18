@@ -271,7 +271,32 @@ class SecurityWarningTests(unittest.TestCase):
         self.assertFalse(any("\n" in line for line in lines))
 
 
+class EnvironmentTests(unittest.TestCase):
+    def test_force_refresh_is_removed_from_inherited_environment(self):
+        with patch.dict("os.environ", {"HOMEBREW_FORCE_API_AUTO_UPDATE": "1"}):
+            self.assertNotIn("HOMEBREW_FORCE_API_AUTO_UPDATE", Brew().env)
+
+    def test_effective_brew_env_overrides_are_rejected(self):
+        good = {k: "1" for k in ("HOMEBREW_NO_AUTO_UPDATE", "HOMEBREW_NO_INSTALL_CLEANUP",
+                                  "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK")}
+        for override in ({}, {"HOMEBREW_FORCE_API_AUTO_UPDATE": "1"},
+                         {"HOMEBREW_NO_AUTO_UPDATE": ""}, {"HOMEBREW_NO_INSTALL_CLEANUP": ""},
+                         {"HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK": ""}):
+            with self.subTest(override=override), patch.object(
+                    Brew, "run", return_value="BREW_COOLDOWN_ENV=" + json.dumps(good | override)):
+                if override:
+                    with self.assertRaises(CooldownError):
+                        Brew().check_environment()
+                else:
+                    Brew().check_environment()
+
+
 class UpgradeTargetTests(unittest.TestCase):
+    def setUp(self):
+        guard = patch.object(Brew, "check_environment")
+        guard.start()
+        self.addCleanup(guard.stop)
+
     def test_unambiguous_target_uses_short_name(self):
         target = "vendor/tap/tool"
         with patch.object(Brew, "run", return_value="BREW_COOLDOWN_TARGET=" + json.dumps([target, target])):
@@ -295,6 +320,9 @@ class UpgradeTargetTests(unittest.TestCase):
 
 class ExecutionTests(unittest.TestCase):
     def setUp(self):
+        guard = patch.object(Brew, "check_environment")
+        guard.start()
+        self.addCleanup(guard.stop)
         scanner = patch.object(Brew, "security_warnings")
         self.scanner = scanner.start()
         self.addCleanup(scanner.stop)
