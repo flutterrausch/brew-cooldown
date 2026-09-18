@@ -2,7 +2,7 @@
 
 Give new Homebrew updates a little time to settle.
 
-`brew-cooldown` waits **seven days after first observing an unchanged candidate**
+`brew-cooldown` waits **7 days after first observing an unchanged candidate**
 before upgrading it. It supports formulae, casks, and third-party taps, checks
 dependencies, and previews by default.
 
@@ -14,7 +14,7 @@ A weekly update schedule alone does not help: it can still install a release tha
 is five minutes old.
 
 William Woodruff's [We should all be using dependency cooldowns](https://blog.yossarian.net/2025/11/21/We-should-all-be-using-dependency-cooldowns)
-is a good introduction. Seven days is a practical default, not a guarantee of safety;
+is a good introduction. 7 days is a practical default, not a guarantee of safety;
 a cooldown can also delay an important security fix.
 
 ### Doesn't the package manager already do this?
@@ -22,7 +22,7 @@ a cooldown can also delay an important security fix.
 **npm does:** its native [`min-release-age`](https://docs.npmjs.com/cli/install/#min-release-age)
 setting filters newly resolved registry versions by publication age, including
 transitive dependencies. For example, `npm update --min-release-age=7` sets a
-seven-day minimum. This wrapper does not manage npm packages.
+7-day minimum. This wrapper does not manage npm packages.
 
 **Homebrew has no general user-facing upgrade cooldown yet** (checked September
 2026). The [original proposal](https://github.com/Homebrew/brew/issues/21129) was
@@ -45,7 +45,7 @@ cd brew-cooldown
 brew update && ./brew-cooldown
 ```
 
-The first run records candidates and shows `DEFER` messages. After seven days:
+The first run records candidates and shows `DEFER` messages. After 7 days:
 
 ```sh
 brew update && ./brew-cooldown upgrade
@@ -53,7 +53,7 @@ brew update && ./brew-cooldown upgrade
 
 Unchanged, eligible candidates can now upgrade. Changed candidates start a fresh
 waiting period. You can preview whenever you like without resetting unchanged
-candidates. Even an old release waits seven days after your first observation.
+candidates. Even an old release waits 7 days after your first observation.
 
 ## Everyday use
 
