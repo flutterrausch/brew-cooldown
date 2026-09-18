@@ -71,6 +71,10 @@ use `vendor/tap/package` to distinguish namesakes. Pinned packages are not selec
 for upgrade, and nothing is unpinned. Explicit exclusions also block dependent
 upgrades. No packages are excluded by default.
 
+Upgrades are deferred if Homebrew's short name or installed alias would select a
+different package. This avoids both source mix-ups and implicit trust grants from
+fully qualified upgrade arguments.
+
 Optionally run `pipx install .` to put `brew-cooldown` on your PATH. In an update
 script, use `brew update && brew-cooldown upgrade` in place of unrestricted
 `brew upgrade` calls. Following it with plain `brew upgrade` would bypass the gate.

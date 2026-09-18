@@ -235,9 +235,39 @@ puts "BREW_COOLDOWN_DEPS=" + JSON.generate(dependencies)
         except (ValueError, TypeError) as exc:
             raise CooldownError(f"could not inspect cask archive dependencies: {name}") from exc
 
+    def upgrade_name(self, kind, name):
+        # Fully qualified upgrade arguments implicitly grant item trust in Homebrew.
+        # Use a short argument only after checking resolution AND alias retargeting.
+        short_name = name.rsplit("/", 1)[-1]
+        script = '''
+require "json"
+kind, name = JSON.parse(%s)
+if kind == "formula"
+  require "formula"
+  item = Formulary.resolve(name)
+  latest = item.latest_formula
+  target = latest.latest_version_installed? ? item : latest
+  identities = [item, target].map { |f| "#{f.tap.name}/#{f.name}" }
+else
+  require "cask/cask_loader"
+  item = Cask::CaskLoader.load(name)
+  identities = [item, item].map { |c| "#{c.tap.name}/#{c.token}" }
+end
+puts "BREW_COOLDOWN_TARGET=" + JSON.generate(identities)
+''' % json.dumps(json.dumps([kind, short_name]))
+        output = self.run("ruby", "-e", script)
+        lines = [line for line in output.splitlines() if line.startswith("BREW_COOLDOWN_TARGET=")]
+        try:
+            if len(lines) != 1 or json.loads(lines[0].split("=", 1)[1]) != [name, name]:
+                raise ValueError("short name or installed alias resolves to a different candidate")
+        except (ValueError, TypeError) as exc:
+            raise CooldownError(f"cannot safely target {name}: {exc}") from exc
+        return short_name
+
     def upgrade(self, kind, name):
         # No arbitrary arguments: users cannot accidentally enable HEAD/greedy/source overrides.
-        result = subprocess.run(["brew", "upgrade", "--no-ask", f"--{kind}", name], env=self.env)
+        short_name = self.upgrade_name(kind, name)
+        result = subprocess.run(["brew", "upgrade", "--no-ask", f"--{kind}", short_name], env=self.env)
         if result.returncode:
             raise CooldownError(f"upgrade failed for {name} (exit {result.returncode})")
 
@@ -335,6 +365,9 @@ class Planner:
             name = key[1]
             if self.excluded(key):
                 reasons.append(f"{name}: excluded")
+            elif (key == ("formula", "homebrew/core/pkgconf")
+                  and self.data[key].get("pinned") and self.data[key].get("outdated")):
+                reasons.append(f"{name}: pinned; Homebrew's implicit SDK repair could replace it")
             elif key in self.errors:
                 reasons.append(f"{name}: {self.errors[key]}")
             elif self.waits[key] > 0:

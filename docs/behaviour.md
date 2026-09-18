@@ -33,6 +33,9 @@ unrelated official tap commits are excluded. For third-party taps, the entire ta
 Git revision is included because recipes may load shared helpers: even unrelated
 commits in that tap conservatively restart the timer.
 
+All non-local metadata fields participate in this fingerprint. Homebrew schema
+changes or informational metadata edits can therefore restart observation clocks.
+
 A changed candidate restarts its clock, including a return to a previously observed
 version. Unknown tap identity, missing checksums, HEAD installs, and checksum-free
 or `latest` casks are deferred. Pinned packages are not selected for upgrade.
@@ -43,6 +46,8 @@ recursively. Even already installed dependency candidates must pass; this can de
 more upgrades than necessary. Exclusions also block parents that depend on them.
 An installed `pkgconf` and its dependencies are checked because Homebrew can repair
 it after an upgrade following a macOS SDK change.
+If that installed `pkgconf` is pinned and outdated, upgrades are deferred because
+Homebrew's implicit repair could replace it despite the pin.
 
 Before an eligible cask is actually upgraded, its archive is downloaded and
 checksum-verified. A small `brew ruby` query asks Homebrew's cask installer for
@@ -55,6 +60,13 @@ Eligible candidates are re-read immediately before each upgrade, and the depende
 graph is checked again. Automatic dependent upgrades/repairs and installation
 cleanup are disabled. Upgrades run one selected package at a time with Homebrew's
 checksum verification and existing tap trust controls intact.
+
+Before invoking Homebrew, a read-only Ruby query verifies that the package's short
+name resolves to the checked identity and that Homebrew's installed-alias handling
+would not switch the target. The upgrade uses that verified short name: fully
+qualified upgrade arguments can implicitly create item trust entries in Homebrew.
+Namesakes that resolve to another tap and alias redirects are deferred, even when
+selected with a fully qualified `--only` argument. This check does not change trust.
 
 ## State and exit codes
 
@@ -76,10 +88,14 @@ Do not run another Homebrew update/install/upgrade or edit taps concurrently.
 Homebrew has no public atomic API for executing an immutable upgrade plan, so
 there remains a gap between final verification and installation. The wrapper's
 lock covers other wrapper invocations only. Future changes to Homebrew's implicit
-installation behaviour may require updates to these checks. The archive query
-uses Homebrew's internal Ruby API (verified against Homebrew 6.0.22); API errors
-defer the upgrade rather than bypassing the check. This is the one integration
-point that needs particular attention when supporting future Homebrew releases.
+installation behaviour may require updates to these checks. The archive and target
+queries use Homebrew's internal Ruby API (verified against Homebrew 6.0.22); API
+errors defer the upgrade rather than bypassing the checks. These integration
+points need particular attention when supporting future Homebrew releases.
+
+Disabling automatic dependent repairs prevents unchecked upgrades, but an ABI-changing
+library upgrade may leave installed dependents needing a later repair. The wrapper
+does not automatically resolve that tradeoff or bypass their cooldowns.
 
 Homebrew itself, arbitrary Ruby in third-party recipes, installer/post-install
 scripts, software those scripts download independently, and apps' own automatic

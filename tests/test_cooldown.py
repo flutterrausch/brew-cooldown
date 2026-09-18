@@ -123,6 +123,12 @@ class PlannerTests(unittest.TestCase):
             planner.verify(keys)
         self.assertEqual(planner.entries, {})
 
+    def test_pinned_outdated_pkgconf_blocks_implicit_repair(self):
+        planner = Planner(FakeBrew(), {}, 7, 100)
+        planner.add("formula", formula("pkgconf", pinned=True, installed=[{"version": "0.9"}]))
+        root = planner.add("cask", cask())
+        self.assertTrue(any("pinned" in reason for reason in planner.blockers(planner.closure(root))))
+
     def test_new_archive_cask_is_deferred_without_fetching_it(self):
         app = cask()
         brew = FakeBrew(casks=[app, cask("helper")])
@@ -252,6 +258,28 @@ class SecurityWarningTests(unittest.TestCase):
         self.assertFalse(any("\n" in line for line in lines))
 
 
+class UpgradeTargetTests(unittest.TestCase):
+    def test_unambiguous_target_uses_short_name(self):
+        target = "vendor/tap/tool"
+        with patch.object(Brew, "run", return_value="BREW_COOLDOWN_TARGET=" + json.dumps([target, target])):
+            self.assertEqual(Brew().upgrade_name("formula", target), "tool")
+
+    def test_namesake_and_installed_alias_redirects_are_rejected(self):
+        requested = "vendor/tap/tool"
+        for identities in (["homebrew/core/tool"] * 2, [requested, "vendor/tap/tool@2"]):
+            with self.subTest(identities=identities), \
+                    patch.object(Brew, "run", return_value="BREW_COOLDOWN_TARGET=" + json.dumps(identities)), \
+                    patch("brew_cooldown.subprocess.run") as execute:
+                with self.assertRaises(CooldownError):
+                    Brew().upgrade("formula", requested)
+                execute.assert_not_called()
+
+    def test_missing_target_probe_result_blocks_upgrade(self):
+        with patch.object(Brew, "run", return_value="unexpected output"):
+            with self.assertRaises(CooldownError):
+                Brew().upgrade_name("formula", "vendor/tap/tool")
+
+
 class ExecutionTests(unittest.TestCase):
     def setUp(self):
         scanner = patch.object(Brew, "security_warnings")
@@ -312,11 +340,12 @@ class ExecutionTests(unittest.TestCase):
             self.assertEqual(self.run_tool(path), (0, []))
 
     def test_subprocess_disables_refresh_repairs_and_cleanup(self):
-        with patch("brew_cooldown.subprocess.run") as run:
+        with patch("brew_cooldown.subprocess.run") as run, \
+                patch.object(Brew, "upgrade_name", return_value="app"):
             run.return_value.returncode = 0
             Brew().upgrade("cask", "vendor/tap/app")
             args, kwargs = run.call_args
-            self.assertEqual(args[0], ["brew", "upgrade", "--no-ask", "--cask", "vendor/tap/app"])
+            self.assertEqual(args[0], ["brew", "upgrade", "--no-ask", "--cask", "app"])
             for setting in ("HOMEBREW_NO_AUTO_UPDATE", "HOMEBREW_NO_INSTALL_CLEANUP", "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK"):
                 self.assertEqual(kwargs["env"][setting], "1")
 
