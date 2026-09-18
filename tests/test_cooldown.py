@@ -92,6 +92,18 @@ class ObservationTests(unittest.TestCase):
 
 
 class PlannerTests(unittest.TestCase):
+    def test_new_archive_cask_is_deferred_without_fetching_it(self):
+        app = cask()
+        brew = FakeBrew(casks=[app, cask("helper")])
+        entries = {}
+        Planner(brew, entries, 7, 100).add("cask", app)
+        planner = Planner(brew, entries, 7, 100 + 8 * DAY)
+        root = planner.add("cask", app)
+        with patch.object(brew, "cask_archive_deps", return_value=[("cask", "helper")], create=True) as archive:
+            closure = planner.archive_closure({root})
+            archive.assert_called_once_with("homebrew/cask/app")
+        self.assertIn("helper", planner.blockers(closure)[0])
+
     def test_archive_extractor_dependency_gets_its_own_cooldown(self):
         app = cask()
         brew = FakeBrew([formula("extractor")], [app])
@@ -154,6 +166,8 @@ class PlannerTests(unittest.TestCase):
         root = planner.add("formula", formula())
         with self.assertRaisesRegex(CooldownError, "changed"):
             planner.verify({root})
+        self.assertNotIn(":".join(root), planner.entries)
+        self.assertIn("changed", planner.blockers({root})[0])
 
     def test_unverifiable_candidate_erases_previous_age(self):
         planner = Planner(FakeBrew(), {}, 7, 100)
@@ -210,7 +224,10 @@ class ExecutionTests(unittest.TestCase):
 
     def test_changed_candidate_never_executes_upgrade(self):
         with tempfile.TemporaryDirectory() as directory:
-            self.assertEqual(self.run_tool(Path(directory) / "state.json", aged=True, changed=True), (1, []))
+            path = Path(directory) / "state.json"
+            self.assertEqual(self.run_tool(path, aged=True, changed=True), (1, []))
+            # Even a revert to the original version must start its clock again.
+            self.assertEqual(self.run_tool(path), (0, []))
 
     def test_subprocess_disables_refresh_repairs_and_cleanup(self):
         with patch("brew_cooldown.subprocess.run") as run:

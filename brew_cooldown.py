@@ -208,6 +208,8 @@ class Planner:
     def add(self, kind, data):
         key = identity(kind, data)
         self.data[key] = data
+        self.errors.pop(key, None)
+        self.waits.pop(key, None)
         for alias in (key[1], data.get("full_name"), data.get("full_token")):
             if alias:
                 self.aliases[kind, alias] = key
@@ -274,9 +276,8 @@ class Planner:
                 return expanded
             for key in sorted(pending):
                 # Newly discovered casks must mature before even fetching their archive.
-                blockers = self.blockers({key})
-                if blockers:
-                    raise CooldownError("; ".join(blockers))
+                if self.blockers({key}):
+                    return expanded
                 for kind, dep in self.brew.cask_archive_deps(key[1]):
                     expanded.update(self.closure(self.load(kind, dep)))
                 checked.add(key)
@@ -302,10 +303,18 @@ class Planner:
             items = result["formulae" if kind == "formula" else "casks"]
             fresh = {identity(kind, item): item for item in items}
             if keys != fresh.keys():
+                for key in keys:
+                    self.entries.pop(":".join(key), None)
+                    self.errors[key] = "package identity changed during verification"
                 raise CooldownError("package identity changed during verification; run again")
             for key in keys:
-                if fingerprint(kind, fresh[key]) != fingerprint(kind, self.data[key]):
-                    raise CooldownError(f"candidate changed during verification: {key[1]}; run again")
+                try:
+                    if fingerprint(kind, fresh[key]) != fingerprint(kind, self.data[key]):
+                        raise CooldownError(f"candidate changed during verification: {key[1]}; run again")
+                except CooldownError as exc:
+                    self.entries.pop(":".join(key), None)
+                    self.errors[key] = str(exc)
+                    raise
 
 
 def positive_days(value):
