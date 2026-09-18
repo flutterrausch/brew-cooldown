@@ -77,6 +77,9 @@ script, use `brew update && brew-cooldown upgrade` in place of unrestricted
 
 ## A few things to know
 
+- Preview and upgrade check installed formulae with `brew vulns`. **⚠️ warnings**
+  flag high/critical advisories with released fixes and link to details. They never
+  bypass the cooldown, pins, or exclusions; casks are not covered by this scan.
 - **Early-stage:** checked on macOS with Homebrew 6.0.22. Actual upgrades have not
   yet been tested end to end on a live system.
 - Dependencies can extend the wait. Casks may need an archive download during

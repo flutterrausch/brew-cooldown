@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import quote
 
 DAY = 86400
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -146,6 +147,53 @@ class Brew:
             return json.loads(self.run(*args))
         except ValueError as exc:
             raise CooldownError("Homebrew returned invalid JSON") from exc
+
+    def security_warnings(self):
+        """Advisories inform the user; they never change upgrade eligibility."""
+        def warn(message):
+            # Keep registry-provided text on one line without terminal controls.
+            text = " ".join(str(message).split())
+            text = "".join(c for c in text if c.isprintable())
+            print(f"⚠️ {text}", flush=True)
+
+        print("Checking installed formulae for high/critical advisories with released fixes…", flush=True)
+        try:
+            result = subprocess.run(
+                ["brew", "vulns", "--severity=high", "--fix-available", "--json"],
+                env=self.env, text=True, capture_output=True, timeout=60,
+            )
+            for line in result.stderr.splitlines():
+                if line.strip():
+                    warn(f"Security scanner: {line}")
+            report = json.loads(result.stdout)
+            findings, skipped = report["findings"], report["skipped_formulae"]
+            if not isinstance(findings, list) or not isinstance(skipped, list):
+                raise ValueError("unexpected report format")
+            count = 0
+            for finding in findings:
+                for vuln in finding["vulnerabilities"]:
+                    fixes = vuln["fixed_versions"]
+                    if not isinstance(fixes, list):
+                        raise ValueError("unexpected fixed versions")
+                    warn(f"{finding['formula']} (scanned version {finding['version']}): "
+                         f"{vuln['id']} [{vuln['severity']}]. "
+                         f"Reported fixed versions: {', '.join(fixes)}. "
+                         f"https://osv.dev/vulnerability/{quote(vuln['id'], safe='')}")
+                    count += 1
+            if count:
+                warn("Review these potential security fixes. The Homebrew candidate is not verified "
+                     "to fix them; cooldowns, pins, and exclusions remain unchanged.")
+            if skipped:
+                warn(f"Security scanner skipped {len(skipped)} formulae: {', '.join(skipped)}")
+            # brew vulns normally exits 1 when it finds open vulnerabilities.
+            if result.returncode not in (0, 1) or (result.returncode == 1 and not count):
+                warn(f"Security scan incomplete (exit {result.returncode}); cooldown checks continue.")
+            elif not count:
+                print("No high/critical advisories with released fixes reported; coverage may be incomplete.")
+            print("Security scan covers formulae, not casks.", flush=True)
+        except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError) as exc:
+            warn(f"Security scan unavailable or incomplete ({exc}); cooldown checks continue. "
+                 "This does not mean installed packages are free of vulnerabilities.")
 
     def deps(self, name):
         result = self.run("deps", "--formula", "--full-name", "--union",
@@ -357,6 +405,7 @@ def main(argv=None):
                         roots.append(key)
             if set(args.only) - matched:
                 raise CooldownError(f"not installed or unresolved: {', '.join(sorted(set(args.only) - matched))}")
+            brew.security_warnings()
             print(f"{args.command.capitalize()}: {args.days}-day observation cooldown; {len(roots)} outdated candidates")
             failed = False
             for key in roots:

@@ -4,6 +4,21 @@
 
 ## How the checks work
 
+Before planning upgrades, both commands run
+`brew vulns --severity=high --fix-available --json` for installed formulae, including
+pinned/excluded formulae and regardless of `--only`. Findings print warnings led
+by `⚠️`, with the scanned version, advisory ID, severity, reported fixed versions,
+and an OSV link. Already patched findings are not repeated.
+
+These are advisory warnings, not verified security-upgrade classifications. A
+released upstream fix may not be present in the Homebrew candidate. Homebrew can
+also fall back to scanning current formula metadata when the installed source is
+unknown; scanner diagnostics are retained as warnings. Skipped packages, unavailable
+scanning, and timeouts are reported without changing upgrade eligibility or exit
+status. The scan has a 60-second timeout and does not cover casks. No findings is
+not evidence that every installed package is safe. Normal cooldown, pin, and
+exclusion rules still apply.
+
 The first observation starts the clock, even for a release published long ago.
 Run `brew update` before invoking this tool to fetch current metadata. The tool
 itself disables automatic Homebrew updates while inspecting and upgrading.
@@ -89,4 +104,3 @@ on a live system.
 Issues and contributions should include the Homebrew version, Python version,
 operating system, command, and relevant output. Do not include credentials or
 private tap contents.
-

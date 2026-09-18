@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import subprocess
 from unittest.mock import patch
 
 from brew_cooldown import Brew, CooldownError, DAY, Planner, fingerprint, main, observe, state_file
@@ -176,7 +177,57 @@ class PlannerTests(unittest.TestCase):
         self.assertNotIn(":".join(key), planner.entries)
 
 
+class SecurityWarningTests(unittest.TestCase):
+    def scan(self, report, code=0, stderr=""):
+        result = subprocess.CompletedProcess([], code, json.dumps(report), stderr)
+        with patch("brew_cooldown.subprocess.run", return_value=result) as run, patch("builtins.print") as output:
+            Brew().security_warnings()
+        self.assertEqual(run.call_args.args[0],
+                         ["brew", "vulns", "--severity=high", "--fix-available", "--json"])
+        return [str(call.args[0]) for call in output.call_args_list]
+
+    def test_findings_exit_one_is_not_a_scan_failure(self):
+        finding = {"formula": "openssl@3", "version": "3.0.0", "vulnerabilities": [
+            {"id": "CVE-2026-1234", "severity": "HIGH", "fixed_versions": ["3.0.1"]}],
+            "patched": [{"id": "already-fixed"}]}
+        lines = self.scan({"findings": [finding], "skipped_formulae": []}, code=1)
+        warning = next(line for line in lines if "CVE-2026-1234" in line)
+        self.assertTrue(warning.startswith("⚠️"))
+        self.assertIn("https://osv.dev/vulnerability/CVE-2026-1234", warning)
+        self.assertTrue(any("pins, and exclusions remain unchanged" in line for line in lines))
+        self.assertFalse(any("already-fixed" in line or "scan incomplete" in line for line in lines))
+
+    def test_skipped_packages_and_scanner_diagnostics_are_warnings(self):
+        lines = self.scan({"findings": [], "skipped_formulae": ["vendor/tap/tool"]},
+                          code=1, stderr="Installed source unknown; using current formula version\n")
+        self.assertTrue(any(line.startswith("⚠️") and "Installed source unknown" in line for line in lines))
+        self.assertTrue(any(line.startswith("⚠️") and "vendor/tap/tool" in line for line in lines))
+        self.assertTrue(any(line.startswith("⚠️") and "incomplete" in line for line in lines))
+
+    def test_invalid_output_is_nonfatal_and_not_a_clean_bill_of_health(self):
+        lines = self.scan({"unexpected": []})
+        self.assertTrue(any(line.startswith("⚠️") and "unavailable or incomplete" in line for line in lines))
+        self.assertFalse(any(line.startswith("No high/critical") for line in lines))
+
+    def test_timeout_is_nonfatal(self):
+        with patch("brew_cooldown.subprocess.run", side_effect=subprocess.TimeoutExpired("brew", 60)), \
+                patch("builtins.print") as output:
+            Brew().security_warnings()
+        self.assertTrue(any(str(call.args[0]).startswith("⚠️") for call in output.call_args_list))
+
+    def test_advisory_text_cannot_inject_another_line(self):
+        finding = {"formula": "tool\nFAKE", "version": "1", "vulnerabilities": [
+            {"id": "CVE-1", "severity": "HIGH", "fixed_versions": ["2"]}]}
+        lines = self.scan({"findings": [finding], "skipped_formulae": []}, code=1)
+        self.assertFalse(any("\n" in line for line in lines))
+
+
 class ExecutionTests(unittest.TestCase):
+    def setUp(self):
+        scanner = patch.object(Brew, "security_warnings")
+        self.scanner = scanner.start()
+        self.addCleanup(scanner.stop)
+
     def test_cask_archive_failure_prevents_execution(self):
         candidate = cask(outdated=True)
         with tempfile.TemporaryDirectory() as directory:
@@ -215,6 +266,7 @@ class ExecutionTests(unittest.TestCase):
     def test_fresh_candidate_never_executes_upgrade(self):
         with tempfile.TemporaryDirectory() as directory:
             self.assertEqual(self.run_tool(Path(directory) / "state.json"), (0, []))
+        self.scanner.assert_called_once()
 
     def test_mature_candidate_executes_and_preview_does_not(self):
         with tempfile.TemporaryDirectory() as directory:
